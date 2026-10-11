@@ -1,6 +1,7 @@
 opencv-python
 medpy
 anyio==4.15.1
+pandas
 appnope==1.0.0
 argon2-cffi==25.1.0
 argon2-cffi-bindings==26.1.0
