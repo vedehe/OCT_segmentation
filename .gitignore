@@ -1,0 +1,17 @@
+# OCT datasets
+OCT/
+data/raw/
+
+# Processed images (optional)
+# data/processed/
+
+# Python environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+
+outputs/
+checkpoints/
