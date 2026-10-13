@@ -10,17 +10,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 IMAGE_PATH = PROJECT_ROOT / "data/raw/OCTA_3mm/116.bmp"
 PROCESSED_PATH = PROJECT_ROOT / "data/processed/images/116.bmp"
 
-OUTPUT_DIR = PROJECT_ROOT / "outputs/intensity_8bands_116"
+# OUTPUT_DIR = PROJECT_ROOT / "outputs/intensity_8bands_116"
+OUTPUT_DIR = PROJECT_ROOT / "outputs/intensity_5bands_116"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+# OUTPUT_DIR = PROJECT_ROOT / "outputs/intensity_8bands_116"
+# OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # IMAGE_PATH = PROJECT_ROOT / "data/raw/OCTA_3mm/116.bmp"
 # PROCESSED_PATH = PROJECT_ROOT / "data/processed/images/116.bmp"
 # OUTPUT_DIR = PROJECT_ROOT / "outputs/intensity_8bands_116"
-# # ==================================================
 # # 1. Paths and settings
-# # ==================================================
 
 # IMAGE_PATH = "data/raw/OCTA_3mm/116.bmp"
 # PROCESSED_PATH = "data/processed/images/116.bmp"
@@ -33,26 +34,21 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 ROI_THRESHOLD = 10
 THICKNESS_FRACTION = 0.55  # Tune after checking the ROI panel
-N_BANDS = 8
+N_BANDS = 5
 
 
 
 # Distinct colours ordered from darkest to brightest intensity.
 # RGB values for Matplotlib; OpenCV conversion is handled when saving.
 PALETTE = np.array([
-    [ 30,  30, 150],  # 1: deep blue
-    [  0, 100, 255],  # 2: bright blue
-    [150,  50, 220],  # 3: purple
-    [230,  40, 180],  # 4: magenta
-    [255,  80, 130],  # 5: pink
-    [230,  30,  30],  # 6: red
-    [255, 130,  30],  # 7: orange
-    [255, 225,  40],  # 8: yellow
+    [30, 30, 150],    # Band 1: deep blue
+    [150, 50, 220],   # Band 2: purple
+    [255, 80, 130],   # Band 3: pink
+    [255, 130, 30],   # Band 4: orange
+    [255, 225, 40],   # Band 5: yellow
 ], dtype=np.uint8)
 
-# ==================================================
 # 2. Load images
-# ==================================================
 
 image = cv2.imread(IMAGE_PATH, cv2.IMREAD_GRAYSCALE)
 processed = cv2.imread(PROCESSED_PATH, cv2.IMREAD_GRAYSCALE)
@@ -66,11 +62,9 @@ if image.shape != processed.shape:
 
 H, W = image.shape
 
-# ==================================================
 # 3. Estimate retinal ROI
-# ==================================================
 
-roi = (processed > ROI_THRESHOLD).astype(np.uint8)
+roi = (processed > ROI_THRESHOLD).astype(np.uint8) #binarization 
 
 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 roi = cv2.morphologyEx(roi, cv2.MORPH_CLOSE, kernel)
@@ -80,21 +74,21 @@ n, component_map, stats, _ = cv2.connectedComponentsWithStats(
 )
 if n <= 1:
     raise ValueError("No retinal region detected in the processed image.")
-
-largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+#stats[:, cv2.CC_STAT_AREA] contains the area, in pixels, of each component. 
+largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA]) #excludes the background 
 roi = (component_map == largest).astype(np.uint8)
 
 top = np.zeros(W, dtype=np.int32)
 bottom = np.full(W, H - 1, dtype=np.int32)
 valid_cols = []
 
-for x in range(W):
+for x in range(W): #loop then updates these values 
     ys = np.flatnonzero(roi[:, x])
     if len(ys) > 0:
         top[x] = ys[0]
         bottom[x] = ys[-1]
         valid_cols.append(x)
-
+# Linear interpolation
 if len(valid_cols) < 2:
     raise ValueError("Could not determine the retinal ROI.")
 
@@ -111,9 +105,7 @@ for x in range(W):
     lower = max(top[x] + 1, min(lower, H - 1))
     retinal_roi[top[x]:lower + 1, x] = 1
 
-# ==================================================
 # 4. Split original intensities into 8 quantile bands
-# ==================================================
 
 intensity = image.astype(np.float32)
 roi_values = intensity[retinal_roi == 1]
@@ -122,11 +114,16 @@ if roi_values.size == 0:
 
 # Quantile thresholds give bands with approximately balanced pixel counts.
 # Repeated thresholds are possible for highly discrete intensity distributions.
+# thresholds = np.quantile(
+#     roi_values, np.arange(1, N_BANDS) / N_BANDS
+# )
 thresholds = np.quantile(
-    roi_values, np.arange(1, N_BANDS) / N_BANDS
+    roi_values,
+    np.arange(1, N_BANDS) / N_BANDS
 )
 
-# Band labels: 1 = darkest, 8 = brightest; 0 = outside ROI.
+# Band labels: 1 = darkest, 5 = brightest; 0 = outside ROI.
+#np.searchsorted() determines where each intensity belongs among the sorted thresholds.
 labels = np.zeros((H, W), dtype=np.uint8)
 labels[retinal_roi == 1] = (
     np.searchsorted(thresholds, intensity[retinal_roi == 1], side="left") + 1
@@ -137,9 +134,8 @@ segmented_rgb = np.zeros((H, W, 3), dtype=np.uint8)
 for band_id in range(1, N_BANDS + 1):
     segmented_rgb[labels == band_id] = PALETTE[band_id - 1]
 
-# ==================================================
 # 5. Measure area and vertical thickness by band
-# ==================================================
+
 
 rows = []
 for band_id in range(1, N_BANDS + 1):
@@ -162,6 +158,7 @@ for band_id in range(1, N_BANDS + 1):
             else f"({thresholds[band_id-2]:.1f}, {thresholds[band_id-1]:.1f}]"
         ),
         "Pixels": pixel_count,
+        #Calculate the percentage of ROI area 
         "ROI area (%)": 100 * pixel_count / max(1, int(retinal_roi.sum())),
         "Columns present": len(spans),
         "Mean vertical span (px)": float(np.mean(spans)) if spans else 0.0,
@@ -174,9 +171,9 @@ df.to_csv(OUTPUT_DIR / "band_measurements.csv", index=False)
 # df = pd.DataFrame(rows)
 # df.to_csv(OUTPUT_DIR / "band_measurements.csv", index=False)
 
-# ==================================================
+
 # 6. Visualize
-# ==================================================
+
 
 fig, ax = plt.subplots(1, 3, figsize=(19, 6))
 
@@ -187,7 +184,7 @@ ax[1].imshow(retinal_roi, cmap="gray")
 ax[1].set_title("Estimated retinal ROI")
 
 ax[2].imshow(segmented_rgb)
-ax[2].set_title("8 intensity bands (1 = darkest, 8 = brightest)")
+ax[2].set_title("5 intensity bands (1 = darkest, 5 = brightest)")
 
 legend_handles = [
     Patch(facecolor=PALETTE[i] / 255.0, label=f"Band {i+1}")
