@@ -6,9 +6,9 @@ import numpy as np
 from PIL import Image
 
 
-# ============================================================
+
 # PATHS AND CONFIGURATION
-# ============================================================
+
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -55,9 +55,9 @@ SAVE_NORMALIZED_VOLUME = True
 SAVE_STACKS = True
 
 
-# ============================================================
+
 # IMAGE LOADING
-# ============================================================
+
 
 def load_bscan(path):
     """Load a grayscale B-scan without resizing."""
@@ -101,9 +101,9 @@ def get_ordered_slices(volume_dir):
     return paths
 
 
-# ============================================================
+
 # INTENSITY NORMALIZATION
-# ============================================================
+
 
 def normalize_with_limits(image, low, high):
     """
@@ -153,9 +153,9 @@ def normalize_volume(volume):
     return normalized.astype(np.float32)
 
 
-# ============================================================
+
 # 2.5D STACK CONSTRUCTION
-# ============================================================
+
 
 def construct_stack(normalized, slice_indices, center_index):
     """
@@ -202,9 +202,9 @@ def construct_stack(normalized, slice_indices, center_index):
     return stack.astype(np.float32)
 
 
-# ============================================================
+
 # PROCESS ONE VOLUME
-# ============================================================
+
 
 def process_volume(volume_dir, writer):
     paths = get_ordered_slices(volume_dir)
@@ -305,9 +305,9 @@ def process_volume(volume_dir, writer):
     return valid_stacks
 
 
-# ============================================================
+
 # MAIN
-# ============================================================
+
 
 
 def main():
