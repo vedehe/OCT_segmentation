@@ -1,99 +1,105 @@
 import torch
 
 
-def dice_score(
-    prediction,
-    target,
-    num_classes
-):
-
-    prediction = prediction.view(-1)
-    target = target.view(-1)
-
-    dice_scores = []
-
-    for class_id in range(num_classes):
-
-        pred_class = (
-            prediction == class_id
+def _validate_inputs(prediction, target, num_classes):
+    """Check segmentation predictions and ground-truth labels."""
+    if prediction.shape != target.shape:
+        raise ValueError(
+            f"Shape mismatch: prediction {prediction.shape}, "
+            f"target {target.shape}"
         )
 
-        target_class = (
-            target == class_id
-        )
+    if prediction.ndim < 2:
+        raise ValueError("Expected batched segmentation tensors.")
 
-        intersection = (
-            pred_class & target_class
-        ).sum().float()
+    if num_classes < 2:
+        raise ValueError("num_classes must be at least 2.")
 
-        denominator = (
-            pred_class.sum()
-            +
-            target_class.sum()
-        ).float()
+    if prediction.numel() == 0:
+        raise ValueError("Prediction and target cannot be empty.")
 
-        if denominator == 0:
 
+def dice_score(prediction, target, num_classes, include_background=True):
+    """
+    Compute mean multiclass Dice score.
+
+    prediction and target contain class IDs, not raw logits.
+    Shape: (B, H, W)
+    """
+    _validate_inputs(prediction, target, num_classes)
+
+    prediction = prediction.long().reshape(-1)
+    target = target.long().reshape(-1)
+
+    scores = []
+
+    start_class = 0 if include_background else 1
+
+    for class_id in range(start_class, num_classes):
+        pred_class = prediction == class_id
+        target_class = target == class_id
+
+        intersection = (pred_class & target_class).sum().float()
+        denominator = pred_class.sum() + target_class.sum()
+
+        # Ignore classes absent from both prediction and target.
+        if denominator.item() == 0:
             continue
 
-        dice = (
-            2 * intersection
-            /
-            denominator
+        scores.append(2.0 * intersection / denominator.float())
+
+    if not scores:
+        return torch.tensor(
+            1.0, device=prediction.device, dtype=torch.float32
         )
 
-        dice_scores.append(dice)
-
-    if len(dice_scores) == 0:
-
-        return torch.tensor(1.0)
-
-    return torch.stack(
-        dice_scores
-    ).mean()
+    return torch.stack(scores).mean()
 
 
-def iou_score(
-    prediction,
-    target,
-    num_classes
-):
+def iou_score(prediction, target, num_classes, include_background=True):
+    """
+    Compute mean multiclass Intersection over Union.
 
-    prediction = prediction.view(-1)
-    target = target.view(-1)
+    prediction and target contain class IDs, not raw logits.
+    Shape: (B, H, W)
+    """
+    _validate_inputs(prediction, target, num_classes)
 
-    iou_scores = []
+    prediction = prediction.long().reshape(-1)
+    target = target.long().reshape(-1)
 
-    for class_id in range(num_classes):
+    scores = []
 
-        pred_class = (
-            prediction == class_id
-        )
+    start_class = 0 if include_background else 1
 
-        target_class = (
-            target == class_id
-        )
+    for class_id in range(start_class, num_classes):
+        pred_class = prediction == class_id
+        target_class = target == class_id
 
-        intersection = (
-            pred_class & target_class
-        ).sum().float()
+        intersection = (pred_class & target_class).sum().float()
+        union = (pred_class | target_class).sum().float()
 
-        union = (
-            pred_class | target_class
-        ).sum().float()
-
-        if union == 0:
-
+        # Ignore classes absent from both prediction and target.
+        if union.item() == 0:
             continue
 
-        iou = intersection / union
+        scores.append(intersection / union)
 
-        iou_scores.append(iou)
+    if not scores:
+        return torch.tensor(
+            1.0, device=prediction.device, dtype=torch.float32
+        )
 
-    if len(iou_scores) == 0:
+    return torch.stack(scores).mean()
 
-        return torch.tensor(1.0)
 
-    return torch.stack(
-        iou_scores
-    ).mean()
+def predictions_from_logits(logits):
+    """
+    Convert U-Net outputs (B, C, H, W) into class predictions (B, H, W).
+    """
+    if logits.ndim != 4:
+        raise ValueError(
+            f"Expected logits shaped (B, C, H, W), got {logits.shape}"
+        )
+
+    return torch.argmax(logits, dim=1)

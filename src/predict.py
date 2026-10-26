@@ -1,188 +1,120 @@
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
-
-from PIL import Image
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-sys.path.append(
-    str(PROJECT_ROOT)
-)
-
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from configs.config import (
-    DEVICE,
+    PROCESSED_DIR,
+    CHECKPOINT_DIR,
+    PREDICTION_DIR,
+    NUM_INPUT_CHANNELS,
     NUM_CLASSES,
-    IN_CHANNELS,
-    IMAGE_HEIGHT,
-    IMAGE_WIDTH,
-    PREDICTION_DIR
+    BASE_CHANNELS,
+    create_output_dirs,
 )
-
 from src.model import UNet
 
 
-def predict(
-    image_path,
-    model_path
-):
+def predict(stack_path, model_path, output_path=None):
+    """
+    Predict eight segmentation classes for a preprocessed OCT stack.
 
-    # ========================================================
-    # LOAD IMAGE
-    # ========================================================
+    Stack shape: (5, 640, 304)
+    Output shape: (640, 304)
+    """
 
-    image = Image.open(
-        image_path
-    ).convert("L")
+    stack_path = Path(stack_path)
+    model_path = Path(model_path)
 
-    original_image = image.copy()
+    if not stack_path.is_file():
+        raise FileNotFoundError(f"Stack not found: {stack_path}")
 
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {model_path}")
 
-    image = image.resize(
-        (IMAGE_WIDTH, IMAGE_HEIGHT)
+    device = torch.device(
+        "mps" if torch.backends.mps.is_available()
+        else "cuda" if torch.cuda.is_available()
+        else "cpu"
     )
+    print("Using device:", device)
 
+    image = np.load(stack_path).astype(np.float32)
 
-    image = np.array(
-        image,
-        dtype=np.float32
-    ) / 255.0
+    if image.ndim != 3 or image.shape[0] != NUM_INPUT_CHANNELS:
+        raise ValueError(
+            f"Expected stack shape (5, H, W), got {image.shape}"
+        )
 
+    # Our preprocessing already normalizes these stacks to [0, 1].
+    if image.max() > 1.0:
+        image /= 255.0
 
+    image = np.clip(image, 0.0, 1.0)
     image_tensor = torch.from_numpy(
-        image
-    ).unsqueeze(0).unsqueeze(0)
-
-
-    image_tensor = image_tensor.to(
-        DEVICE
-    )
-
-
-    # ========================================================
-    # MODEL
-    # ========================================================
+        np.ascontiguousarray(image)
+    ).unsqueeze(0).to(device)
 
     model = UNet(
-        in_channels=IN_CHANNELS,
-        num_classes=NUM_CLASSES
-    )
+        in_channels=NUM_INPUT_CHANNELS,
+        num_classes=NUM_CLASSES,
+        base_channels=BASE_CHANNELS,
+    ).to(device)
 
     checkpoint = torch.load(
         model_path,
-        map_location=DEVICE
+        map_location=device,
+        weights_only=True,
     )
-
-    model.load_state_dict(
-        checkpoint["model_state_dict"]
-    )
-
-    model.to(DEVICE)
-
+    model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
-
-    # ========================================================
-    # PREDICTION
-    # ========================================================
-
     with torch.no_grad():
+        logits = model(image_tensor)
+        prediction = logits.argmax(dim=1)[0].cpu().numpy()
 
-        output = model(
-            image_tensor
-        )
+    # Display the central B-scan from the five-slice stack.
+    central_image = image[NUM_INPUT_CHANNELS // 2]
 
-        prediction = torch.argmax(
-            output,
-            dim=1
-        )
+    if output_path is None:
+        create_output_dirs()
+        output_path = PREDICTION_DIR / f"{stack_path.stem}_prediction.png"
+    else:
+        output_path = Path(output_path)
 
-    prediction = (
-        prediction
-        .squeeze()
-        .cpu()
-        .numpy()
-    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    # ========================================================
-    # DISPLAY
-    # ========================================================
+    axes[0].imshow(central_image, cmap="gray")
+    axes[0].set_title("Central OCT B-scan")
+    axes[0].axis("off")
 
-    plt.figure(
-        figsize=(12, 5)
-    )
+    axes[1].imshow(prediction, cmap="tab10", vmin=0, vmax=NUM_CLASSES - 1)
+    axes[1].set_title("Predicted Class Map")
+    axes[1].axis("off")
 
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
-    plt.subplot(1, 2, 1)
+    print("Prediction shape:", prediction.shape)
+    print("Output saved to:", output_path)
 
-    plt.imshow(
-        original_image,
-        cmap="gray"
-    )
-
-    plt.title("Original OCT")
-
-    plt.axis("off")
-
-
-    plt.subplot(1, 2, 2)
-
-    plt.imshow(
-        prediction,
-        cmap="tab20"
-    )
-
-    plt.title("Predicted Segmentation")
-
-    plt.axis("off")
-
-
-    plt.tight_layout()
-
-
-    output_path = (
-        PREDICTION_DIR
-        /
-        "prediction.png"
-    )
-
-    plt.savefig(
-        output_path,
-        dpi=200
-    )
-
-    plt.show()
+    return prediction
 
 
 if __name__ == "__main__":
-
-    image_path = (
-        PROJECT_ROOT
-        /
-        "data"
-        /
-        "images"
-        /
-        "001.png"
+    stack_path = (
+        PROCESSED_DIR / "10401" / "stacks" / "stack_001.npy"
     )
+    model_path = CHECKPOINT_DIR / "best_model.pth"
 
-    model_path = (
-        PROJECT_ROOT
-        /
-        "outputs"
-        /
-        "checkpoints"
-        /
-        "epoch_50.pth"
-    )
-
-    predict(
-        image_path,
-        model_path
-    )
+    predict(stack_path, model_path)

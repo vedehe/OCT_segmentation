@@ -1,248 +1,151 @@
+
 import torch
 import torch.nn as nn
 
 
 class DoubleConv(nn.Module):
+    """Two convolutional layers with BatchNorm and ReLU."""
 
-    def __init__(
-        self,
-        in_channels,
-        out_channels
-    ):
-
+    def __init__(self, in_channels, out_channels):
         super().__init__()
 
         self.block = nn.Sequential(
+            nn.Conv2d(
+                in_channels, out_channels,
+                kernel_size=3, padding=1, bias=False
+            ),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
 
             nn.Conv2d(
-                in_channels,
-                out_channels,
-                kernel_size=3,
-                padding=1
+                out_channels, out_channels,
+                kernel_size=3, padding=1, bias=False
             ),
-
-            nn.BatchNorm2d(
-                out_channels
-            ),
-
-            nn.ReLU(
-                inplace=True
-            ),
-
-            nn.Conv2d(
-                out_channels,
-                out_channels,
-                kernel_size=3,
-                padding=1
-            ),
-
-            nn.BatchNorm2d(
-                out_channels
-            ),
-
-            nn.ReLU(
-                inplace=True
-            )
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
         )
 
     def forward(self, x):
-
         return self.block(x)
 
 
 class UNet(nn.Module):
+    """
+    Basic 2.5D U-Net for retinal layer segmentation.
+
+    Input:  (B, 5, H, W)
+    Output: (B, 8, H, W)
+
+    B = batch size
+    5 input channels = five adjacent OCT B-scans
+    8 output channels = eight retinal-layer classes
+    """
 
     def __init__(
         self,
-        in_channels=1,
-        num_classes=11
+        in_channels=5,
+        num_classes=8,
+        base_channels=32,
     ):
-
         super().__init__()
 
+        c = base_channels
 
-        # ====================================================
-        # ENCODER
-        # ====================================================
+        # Encoder
+        self.enc1 = DoubleConv(in_channels, c)
+        self.enc2 = DoubleConv(c, 2 * c)
+        self.enc3 = DoubleConv(2 * c, 4 * c)
+        self.enc4 = DoubleConv(4 * c, 8 * c)
 
-        self.enc1 = DoubleConv(
-            in_channels,
-            64
-        )
+        self.pool = nn.MaxPool2d(kernel_size=2)
 
-        self.enc2 = DoubleConv(
-            64,
-            128
-        )
+        # Bottleneck
+        self.bottleneck = DoubleConv(8 * c, 16 * c)
 
-        self.enc3 = DoubleConv(
-            128,
-            256
-        )
-
-        self.enc4 = DoubleConv(
-            256,
-            512
-        )
-
-        self.pool = nn.MaxPool2d(
-            kernel_size=2
-        )
-
-
-        # ====================================================
-        # BOTTLENECK
-        # ====================================================
-
-        self.bottleneck = DoubleConv(
-            512,
-            1024
-        )
-
-
-        # ====================================================
-        # DECODER
-        # ====================================================
-
+        # Decoder
         self.up4 = nn.ConvTranspose2d(
-            1024,
-            512,
-            kernel_size=2,
-            stride=2
+            16 * c, 8 * c, kernel_size=2, stride=2
         )
-
-        self.dec4 = DoubleConv(
-            1024,
-            512
-        )
-
+        self.dec4 = DoubleConv(16 * c, 8 * c)
 
         self.up3 = nn.ConvTranspose2d(
-            512,
-            256,
-            kernel_size=2,
-            stride=2
+            8 * c, 4 * c, kernel_size=2, stride=2
         )
-
-        self.dec3 = DoubleConv(
-            512,
-            256
-        )
-
+        self.dec3 = DoubleConv(8 * c, 4 * c)
 
         self.up2 = nn.ConvTranspose2d(
-            256,
-            128,
-            kernel_size=2,
-            stride=2
+            4 * c, 2 * c, kernel_size=2, stride=2
         )
-
-        self.dec2 = DoubleConv(
-            256,
-            128
-        )
-
+        self.dec2 = DoubleConv(4 * c, 2 * c)
 
         self.up1 = nn.ConvTranspose2d(
-            128,
-            64,
-            kernel_size=2,
-            stride=2
+            2 * c, c, kernel_size=2, stride=2
         )
+        self.dec1 = DoubleConv(2 * c, c)
 
-        self.dec1 = DoubleConv(
-            128,
-            64
-        )
-
-
-        # ====================================================
-        # OUTPUT
-        # ====================================================
-
+        # Per-pixel class scores
         self.output = nn.Conv2d(
-            64,
-            num_classes,
-            kernel_size=1
+            c, num_classes, kernel_size=1
         )
 
+    @staticmethod
+    def concatenate_skip(x, skip):
+        """Check spatial dimensions before skip concatenation."""
+        if x.shape[-2:] != skip.shape[-2:]:
+            raise ValueError(
+                f"Skip connection mismatch: "
+                f"{x.shape[-2:]} versus {skip.shape[-2:]}"
+            )
+
+        return torch.cat([x, skip], dim=1)
 
     def forward(self, x):
-
-        # ----------------------------------------------------
         # Encoder
-        # ----------------------------------------------------
+        e1 = self.enc1(x)
+        e2 = self.enc2(self.pool(e1))
+        e3 = self.enc3(self.pool(e2))
+        e4 = self.enc4(self.pool(e3))
 
-        x1 = self.enc1(x)
-
-        x2 = self.enc2(
-            self.pool(x1)
-        )
-
-        x3 = self.enc3(
-            self.pool(x2)
-        )
-
-        x4 = self.enc4(
-            self.pool(x3)
-        )
-
-
-        # ----------------------------------------------------
         # Bottleneck
-        # ----------------------------------------------------
+        b = self.bottleneck(self.pool(e4))
 
-        x5 = self.bottleneck(
-            self.pool(x4)
-        )
+        # Decoder and skip connections
+        d4 = self.up4(b)
+        d4 = self.concatenate_skip(d4, e4)
+        d4 = self.dec4(d4)
 
+        d3 = self.up3(d4)
+        d3 = self.concatenate_skip(d3, e3)
+        d3 = self.dec3(d3)
 
-        # ----------------------------------------------------
-        # Decoder
-        # ----------------------------------------------------
+        d2 = self.up2(d3)
+        d2 = self.concatenate_skip(d2, e2)
+        d2 = self.dec2(d2)
 
-        x = self.up4(x5)
+        d1 = self.up1(d2)
+        d1 = self.concatenate_skip(d1, e1)
+        d1 = self.dec1(d1)
 
-        x = torch.cat(
-            [x, x4],
-            dim=1
-        )
-
-        x = self.dec4(x)
-
-
-        x = self.up3(x)
-
-        x = torch.cat(
-            [x, x3],
-            dim=1
-        )
-
-        x = self.dec3(x)
+        return self.output(d1)
 
 
-        x = self.up2(x)
+if __name__ == "__main__":
+    model = UNet(
+        in_channels=5,
+        num_classes=8,
+        base_channels=32,
+    )
 
-        x = torch.cat(
-            [x, x2],
-            dim=1
-        )
+    x = torch.randn(1, 5, 640, 304)
 
-        x = self.dec2(x)
+    model.eval()
+    with torch.no_grad():
+        y = model(x)
 
-
-        x = self.up1(x)
-
-        x = torch.cat(
-            [x, x1],
-            dim=1
-        )
-
-        x = self.dec1(x)
-
-
-        # ----------------------------------------------------
-        # Segmentation output
-        # ----------------------------------------------------
-
-        return self.output(x)
+    print("Input shape:", tuple(x.shape))
+    print("Output shape:", tuple(y.shape))
+    print(
+        "Trainable parameters:",
+        sum(p.numel() for p in model.parameters()
+            if p.requires_grad)
+    )

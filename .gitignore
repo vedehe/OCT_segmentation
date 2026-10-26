@@ -1,17 +1,32 @@
 # OCT datasets
 OCT/
 data/raw/
+data/images/
+data/masks/
 
-# Processed images (optional)
-# data/processed/
+# Processed OCT images and stacks
+data/processed/
 
-# Python environments and generated files
+# Python environments
 .venv/
 venv/
+env/
+oct_env/
+
+# Python cache
 __pycache__/
 *.py[cod]
-.DS_Store
-.env
 
+# Environment variables and OS files
+.env
+.DS_Store
+
+# Generated outputs and model checkpoints
 outputs/
 checkpoints/
+*.pth
+*.pt
+*.ckpt
+
+# Jupyter
+.ipynb_checkpoints/
