@@ -22,10 +22,12 @@ class OCTDataset(Dataset):
         image_dir,
         mask_dir=None,
         require_masks=True,
+        num_classes=8,
     ):
         self.image_dir = Path(image_dir)
         self.mask_dir = Path(mask_dir) if mask_dir else None
         self.require_masks = require_masks
+        self.num_classes = num_classes
 
         if not self.image_dir.exists():
             raise FileNotFoundError(
@@ -117,12 +119,13 @@ class OCTDataset(Dataset):
 
         mask = mask.astype(np.int64)
 
-        if mask.min() < 0 or mask.max() >= 8:
+        if mask.min() < 0 or mask.max() >= self.num_classes:
             raise ValueError(
-                f"Mask labels must be integers from 0 to 7; "
+                f"Mask labels must be integers from 0 to "
+                f"{self.num_classes - 1}; "
                 f"found range {mask.min()} to {mask.max()} "
                 f"in {mask_path}"
-            )
+    )
 
         mask_tensor = torch.from_numpy(
             np.ascontiguousarray(mask)

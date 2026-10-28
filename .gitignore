@@ -1,32 +1,44 @@
-# OCT datasets
-OCT/
-data/raw/
-data/images/
-data/masks/
 
-# Processed OCT images and stacks
-data/processed/
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
 
-# Python environments
 .venv/
 venv/
 env/
 oct_env/
 
-# Python cache
-__pycache__/
-*.py[cod]
-
-# Environment variables and OS files
-.env
 .DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 
-# Generated outputs and model checkpoints
-outputs/
+data/raw/
+data/images/
+data/processed/
+data/masks/
+data/spectralis_processed/
+
 checkpoints/
 *.pth
 *.pt
 *.ckpt
+*.onnx
 
-# Jupyter
+
+outputs/
+runs/
+wandb/
+lightning_logs/
+
 .ipynb_checkpoints/
+
+
+*.tmp
+*.temp
+*.bak
